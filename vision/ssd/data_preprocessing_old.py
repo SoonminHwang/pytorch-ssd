@@ -2,27 +2,25 @@ from ..transforms.transforms import *
 
 
 class TrainAugmentation:
-    def __init__(self, size, mean=0, std=1.0, mean_tensor=None, stds_tensor=None):
+    def __init__(self, size, mean=0, std=1.0):
         """
         Args:
             size: the size the of final image.
             mean: mean pixel value per channel.
         """
-        # self.mean = mean
-        # self.std = std
-        # self.size = size
+        self.mean = mean
+        self.size = size
         self.augment = Compose([
-            # ConvertFromInts(),
+            ConvertFromInts(),
             PhotometricDistort(),
-            Expand(mean),
+            Expand(self.mean),
             RandomSampleCrop(),
             RandomMirror(),
             ToPercentCoords(),
-            Resize(size),
+            Resize(self.size),
+            SubtractMeans(self.mean),
+            Lambda(lambda img, boxes=None, labels=None: (img / std, boxes, labels)),            
             ToTensor(),
-            Normalize(mean_tensor, stds_tensor),
-            # SubtractMeans(self.mean),
-            # Lambda(lambda img, boxes=None, labels=None: (img / std, boxes, labels)),                        
         ])
 
     def __call__(self, img, boxes, labels):
@@ -37,14 +35,13 @@ class TrainAugmentation:
 
 
 class TestTransform:
-    def __init__(self, size, mean=0.0, std=1.0, mean_tensor=None, stds_tensor=None):
+    def __init__(self, size, mean=0.0, std=1.0):
         self.transform = Compose([
             ToPercentCoords(),
             Resize(size),
-            # SubtractMeans(mean),
-            # lambda img, boxes=None, labels=None: (img / std, boxes, labels),
+            SubtractMeans(mean),
+            lambda img, boxes=None, labels=None: (img / std, boxes, labels),
             ToTensor(),
-            Normalize(mean_tensor, stds_tensor)
         ])
 
     def __call__(self, image, boxes, labels):
@@ -55,10 +52,9 @@ class PredictionTransform:
     def __init__(self, size, mean=0.0, std=1.0):
         self.transform = Compose([
             Resize(size),
-            # SubtractMeans(mean),
-            # lambda img, boxes=None, labels=None: (img / std, boxes, labels),
-            ToTensor(),
-            Normalize(mean, std)
+            SubtractMeans(mean),
+            lambda img, boxes=None, labels=None: (img / std, boxes, labels),
+            ToTensor()
         ])
 
     def __call__(self, image):

@@ -5,6 +5,8 @@ from typing import List, Tuple
 import torch.nn.functional as F
 
 from ..utils import box_utils
+# from ..utils import box_utils_numpy as box_utils
+
 from collections import namedtuple
 GraphPath = namedtuple("GraphPath", ['s0', 'name', 's1'])  #
 
@@ -29,37 +31,48 @@ class SSD(nn.Module):
         # register layers in source_layer_indexes by adding them to a module list
         self.source_layer_add_ons = nn.ModuleList([t[1] for t in source_layer_indexes
                                                    if isinstance(t, tuple) and not isinstance(t, GraphPath)])
-        if device:
-            self.device = device
-        else:
-            self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        if is_test:
-            self.config = config
-            self.priors = config.priors.to(self.device)
+        # self.source_layer_add_ons = source_layer_indexes[0][1]
+
+        # if device:
+        #     self.device = device
+        # else:
+        #     self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        # if is_test:        
+        self.priors = config.priors.to(self.device)
             
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         confidences = []
         locations = []
         start_layer_index = 0
         header_index = 0
-        for end_layer_index in self.source_layer_indexes:
+
+        for ii, end_layer_index in enumerate(self.source_layer_indexes):
+
+            # check & prepare path
             if isinstance(end_layer_index, GraphPath):
                 path = end_layer_index
                 end_layer_index = end_layer_index.s0
                 added_layer = None
             elif isinstance(end_layer_index, tuple):
-                added_layer = end_layer_index[1]
+                # added_layer = end_layer_index[1]
+                added_layer = self.source_layer_add_ons[ii]
                 end_layer_index = end_layer_index[0]
                 path = None
             else:
                 added_layer = None
                 path = None
+
+            # forward until source_layer_add_on
             for layer in self.base_net[start_layer_index: end_layer_index]:
                 x = layer(x)
+
+            # forward added_layer, if exists.
             if added_layer:
                 y = added_layer(x)
             else:
                 y = x
+
+
             if path:
                 sub = getattr(self.base_net[end_layer_index], path.name)
                 for layer in sub[:path.s1]:
@@ -87,7 +100,8 @@ class SSD(nn.Module):
         confidences = torch.cat(confidences, 1)
         locations = torch.cat(locations, 1)
         
-        if self.is_test:
+        # if self.is_test:
+        if not self.training:
             confidences = F.softmax(confidences, dim=2)
             boxes = box_utils.convert_locations_to_boxes(
                 locations, self.priors, self.config.center_variance, self.config.size_variance
@@ -110,7 +124,7 @@ class SSD(nn.Module):
 
     def init_from_base_net(self, model):
         self.base_net.load_state_dict(torch.load(model, map_location=lambda storage, loc: storage), strict=True)
-        self.source_layer_add_ons.apply(_xavier_init_)
+        # self.source_layer_add_ons.apply(_xavier_init_)
         self.extras.apply(_xavier_init_)
         self.classification_headers.apply(_xavier_init_)
         self.regression_headers.apply(_xavier_init_)
@@ -126,7 +140,7 @@ class SSD(nn.Module):
 
     def init(self):
         self.base_net.apply(_xavier_init_)
-        self.source_layer_add_ons.apply(_xavier_init_)
+        # self.source_layer_add_ons.apply(_xavier_init_)
         self.extras.apply(_xavier_init_)
         self.classification_headers.apply(_xavier_init_)
         self.regression_headers.apply(_xavier_init_)
@@ -148,7 +162,7 @@ class MatchPrior(object):
 
     def __call__(self, gt_boxes, gt_labels):
         if type(gt_boxes) is np.ndarray:
-            gt_boxes = torch.from_numpy(gt_boxes)
+            gt_boxes = torch.from_numpy(gt_boxes).float()
         if type(gt_labels) is np.ndarray:
             gt_labels = torch.from_numpy(gt_labels)
         boxes, labels = box_utils.assign_priors(gt_boxes, gt_labels,

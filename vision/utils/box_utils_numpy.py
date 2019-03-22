@@ -145,6 +145,34 @@ def iou_of(boxes0, boxes1, eps=1e-5):
     area1 = area_of(boxes1[..., :2], boxes1[..., 2:])
     return overlap_area / (area0 + area1 - overlap_area + eps)
 
+# def assign_priors(gt_boxes, gt_labels, corner_form_priors,
+#                   iou_threshold):
+#     """Assign ground truth boxes and targets to priors.
+
+#     Args:
+#         gt_boxes (num_targets, 4): ground truth boxes.
+#         gt_labels (num_targets): labels of targets.
+#         priors (num_priors, 4): corner form priors
+#     Returns:
+#         boxes (num_priors, 4): real values for priors.
+#         labels (num_priros): labels for priors.
+#     """
+#     # size: num_priors x num_targets
+#     ious = iou_of(np.expand_dims(gt_boxes, 0), np.expand_dims(corner_form_priors, 1))
+#     # size: num_priors
+#     best_target_per_prior, best_target_per_prior_index = ious.max(1)
+#     # size: num_targets
+#     best_prior_per_target, best_prior_per_target_index = ious.max(0)
+
+#     for target_index, prior_index in enumerate(best_prior_per_target_index):
+#         best_target_per_prior_index[prior_index] = target_index
+#     # 2.0 is used to make sure every target has a prior assigned
+#     best_target_per_prior.index_fill_(0, best_prior_per_target_index, 2)
+#     # size: num_priors
+#     labels = gt_labels[best_target_per_prior_index]
+#     labels[best_target_per_prior < iou_threshold] = 0  # the backgournd id
+#     boxes = gt_boxes[best_target_per_prior_index]
+#     return boxes, labels
 
 def center_form_to_corner_form(locations):
     return np.concatenate([locations[..., :2] - locations[..., 2:]/2,

@@ -162,6 +162,12 @@ def assign_priors(gt_boxes, gt_labels, corner_form_priors,
         labels (num_priros): labels for priors.
     """
     # size: num_priors x num_targets
+
+    if gt_boxes.shape[0] == 0:
+        boxes = torch.zeros_like(corner_form_priors)
+        labels = torch.zeros( corner_form_priors.shape[0], dtype=gt_labels.dtype )
+        return boxes, labels
+
     ious = iou_of(gt_boxes.unsqueeze(0), corner_form_priors.unsqueeze(1))
     # size: num_priors
     best_target_per_prior, best_target_per_prior_index = ious.max(1)
@@ -194,10 +200,14 @@ def hard_negative_mining(loss, labels, neg_pos_ratio):
         neg_pos_ratio:  the ratio between the negative examples and positive examples.
     """
     pos_mask = labels > 0
+    ign_mask = labels == -100   # vision/datasets/voc_dataset.py:41, assign -100 to difficult boxes
     num_pos = pos_mask.long().sum(dim=1, keepdim=True)
-    num_neg = num_pos * neg_pos_ratio
+    # num_neg = num_pos * neg_pos_ratio
+    num_neg = torch.clamp( num_pos * neg_pos_ratio, min=labels.size(0)*10 )
 
     loss[pos_mask] = -math.inf
+    loss[ign_mask] = -math.inf  # we will not choose any anchors that assigned to the ignore label.
+
     _, indexes = loss.sort(dim=1, descending=True)
     _, orders = indexes.sort(dim=1)
     neg_mask = orders < num_neg
