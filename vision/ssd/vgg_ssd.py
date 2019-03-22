@@ -16,6 +16,7 @@ def create_vgg_ssd(num_classes, is_test=False):
         (23, BatchNorm2d(512)),
         len(base_net),
     ]
+    # source_layer_indexes = []
     extras = ModuleList([
         Sequential(
             Conv2d(in_channels=1024, out_channels=256, kernel_size=1),
