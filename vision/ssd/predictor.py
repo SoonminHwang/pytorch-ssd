@@ -28,14 +28,15 @@ class Predictor:
 
     def predict(self, image, top_k=-1, prob_threshold=None):
         cpu_device = torch.device("cpu")
-        height, width, _ = image.shape
+        # height, width, _ = image.shape
+        width, height = image.size
         image = self.transform(image)
         images = image.unsqueeze(0)
         images = images.to(self.device)
         with torch.no_grad():
-            self.timer.start()
+            # self.timer.start()
             scores, boxes = self.net.forward(images)
-            print("Inference time: ", self.timer.end())
+            # print("Inference time: ", self.timer.end())
         boxes = boxes[0]
         scores = scores[0]
         if not prob_threshold:
@@ -62,7 +63,8 @@ class Predictor:
             picked_box_probs.append(box_probs)
             picked_labels.extend([class_index] * box_probs.size(0))
         if not picked_box_probs:
-            return torch.tensor([]), torch.tensor([]), torch.tensor([])
+            return torch.zeros((0, 4)), torch.zeros((0)), torch.zeros((0))
+            # return torch.tensor([]), torch.tensor([]), torch.tensor([])
         picked_box_probs = torch.cat(picked_box_probs)
         picked_box_probs[:, 0] *= width
         picked_box_probs[:, 1] *= height

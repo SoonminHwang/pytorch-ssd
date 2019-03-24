@@ -19,8 +19,8 @@ def initialize_logger(args):
 	
 	if args.exp_time is None:
 	    args.exp_time        = datetime.now().strftime('%Y-%m-%d_%Hh%Mm')
-	exp_name        = args.exp_name if args.exp_name is not None else ''
-	args.jobs_dir        = os.path.join( 'jobs', args.exp_time + '_' + args.net + '_' + exp_name )
+	exp_name        = '_' + args.exp_name if args.exp_name is not None else ''
+	args.jobs_dir        = os.path.join( 'jobs', args.exp_time + '_' + args.net + exp_name )
 
 	snapshot_dir    = os.path.join( args.jobs_dir, 'snapshots' )
 	tensorboard_dir    = os.path.join( args.jobs_dir, 'tensorboardX' )

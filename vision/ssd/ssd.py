@@ -33,10 +33,10 @@ class SSD(nn.Module):
                                                    if isinstance(t, tuple) and not isinstance(t, GraphPath)])
         # self.source_layer_add_ons = source_layer_indexes[0][1]
 
-        # if device:
-        #     self.device = device
-        # else:
-        #     self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        if device:
+            self.device = device
+        else:
+            self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         # if is_test:        
         self.priors = config.priors.to(self.device)
             

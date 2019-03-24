@@ -3,6 +3,8 @@ from vision.ssd.vgg_ssd import create_vgg_ssd, create_vgg_ssd_predictor
 from vision.ssd.mobilenetv1_ssd import create_mobilenetv1_ssd, create_mobilenetv1_ssd_predictor
 from vision.ssd.mobilenetv1_ssd_lite import create_mobilenetv1_ssd_lite, create_mobilenetv1_ssd_lite_predictor
 from vision.ssd.squeezenet_ssd_lite import create_squeezenet_ssd_lite, create_squeezenet_ssd_lite_predictor
+# from vision.ssd.data_preprocessing import PredictionTransform
+# from vision.ssd.config import vgg_ssd_config as config
 from vision.datasets.voc_dataset import VOCDataset
 from vision.datasets.open_images import OpenImagesDataset
 from vision.utils import box_utils, measurements
@@ -12,6 +14,7 @@ import pathlib
 import numpy as np
 import logging
 import sys
+import pdb
 from vision.ssd.mobilenet_v2_ssd_lite import create_mobilenetv2_ssd_lite, create_mobilenetv2_ssd_lite_predictor
 
 
@@ -65,7 +68,8 @@ def group_annotation_by_class(dataset):
             all_gt_boxes[class_index][image_id] = torch.stack(all_gt_boxes[class_index][image_id])
     for class_index in all_difficult_cases:
         for image_id in all_difficult_cases[class_index]:
-            all_gt_boxes[class_index][image_id] = torch.tensor(all_gt_boxes[class_index][image_id])
+            # all_gt_boxes[class_index][image_id] = torch.tensor(all_gt_boxes[class_index][image_id])
+            all_gt_boxes[class_index][image_id] = all_gt_boxes[class_index][image_id].clone().detach()
     return true_case_stat, all_gt_boxes, all_difficult_cases
 
 
@@ -125,6 +129,8 @@ if __name__ == '__main__':
     timer = Timer()
     class_names = [name.strip() for name in open(args.label_file).readlines()]
 
+    # pred_transform = PredictionTransform(config.image_size, config.image_mean_tensor, config.image_stds_tensor)
+
     if args.dataset_type == "voc":
         dataset = VOCDataset(args.dataset, is_test=True)
     elif args.dataset_type == 'open_images':
@@ -166,22 +172,39 @@ if __name__ == '__main__':
         sys.exit(1)
 
     results = []
-    for i in range(len(dataset)):
-        print("process image", i)
-        timer.start("Load Image")
-        image = dataset.get_image(i)
-        print("Load Image: {:4f} seconds.".format(timer.end("Load Image")))
-        timer.start("Predict")
+    for ii in range(len(dataset)):
+
+        if (ii+1) % 100 == 0:
+            print("process image", ii)        
+            timer.start("Load Image")
+
+        image = dataset.get_image(ii)
+        
+        if (ii+1) % 100 == 0:
+            print("Load Image: {:4f} seconds.".format(timer.end("Load Image")))
+            timer.start("Predict")
+
         boxes, labels, probs = predictor.predict(image)
-        print("Prediction: {:4f} seconds.".format(timer.end("Predict")))
-        indexes = torch.ones(labels.size(0), 1, dtype=torch.float32) * i
+
+        if (ii+1) % 100 == 0:
+            print("Prediction: {:4f} seconds.".format(timer.end("Predict")))
+
+            # break
+
+        # if labels.size(0) == 0:            
+        #     pdb.set_trace()
+
+        indexes = torch.ones(labels.size(0), 1, dtype=torch.float32) * ii
         results.append(torch.cat([
             indexes.reshape(-1, 1),
             labels.reshape(-1, 1).float(),
             probs.reshape(-1, 1),
             boxes + 1.0  # matlab's indexes start from 1
         ], dim=1))
+
     results = torch.cat(results)
+
+
     for class_index, class_name in enumerate(class_names):
         if class_index == 0: continue  # ignore background
         prediction_path = eval_path / f"det_test_{class_name}.txt"

@@ -10,7 +10,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR, MultiStepLR
 
 from vision.utils.misc import str2bool, Timer, freeze_net_layers, store_labels
 from vision.ssd.ssd import MatchPrior
-from vision.ssd.vgg_ssd import create_vgg_ssd
+from vision.ssd.vgg_ssd import create_vgg_ssd, create_vgg_ssd_predictor
 from vision.ssd.mobilenetv1_ssd import create_mobilenetv1_ssd
 from vision.ssd.mobilenetv1_ssd_lite import create_mobilenetv1_ssd_lite
 from vision.ssd.mobilenet_v2_ssd_lite import create_mobilenetv2_ssd_lite
@@ -75,6 +75,10 @@ parser.add_argument('--seed',               default=None, type=int,            h
 parser.add_argument('--resume', '-r',       default=None, type=str,         help='resume from checkpoint')
 parser.add_argument('--port',               default=8804,                   help='port binding for tensorboardX')
 
+parser.add_argument("--nms_method",         default="hard", type=str)
+parser.add_argument("--iou_threshold",      default=0.5, type=float,        help="The threshold of Intersection over Union.")
+parser.add_argument("--use_2007_metric",    default=True, type=str2bool)
+
 args = parser.parse_args()
 
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() and args.use_cuda else "cpu")
@@ -83,6 +87,7 @@ from config import initialize_logger, ROOT_LOGGER_NAME
 logger, args = initialize_logger(args)
 logger_train = logging.getLogger( ROOT_LOGGER_NAME + '.train' )
 logger_test = logging.getLogger( ROOT_LOGGER_NAME + '.test' )
+logger_eval = logging.getLogger( ROOT_LOGGER_NAME + '.eval' )
 
 if args.seed is not None:
     # https://github.com/pytorch/tutorials/blob/master/beginner_source/blitz/data_parallel_tutorial.py
@@ -119,7 +124,6 @@ def train(loader, net, criterion, optimizer, device, debug_steps=100, epoch=-1):
     running_regression_loss = 0.0
     running_classification_loss = 0.0
     N = len(loader)
-    
     for batch_idx, data in enumerate(loader):
         images, boxes, labels = data
         images = images.to(device)
@@ -207,6 +211,7 @@ if __name__ == '__main__':
     
     if args.net == 'vgg16-ssd':
         create_net = create_vgg_ssd
+        create_predictor = create_vgg_ssd_predictor
         config = vgg_ssd_config
     elif args.net == 'mb1-ssd':
         create_net = create_mobilenetv1_ssd
@@ -325,8 +330,7 @@ if __name__ == '__main__':
     logger.info(f'Took {timer.end("Load Model"):.2f} seconds to load the model.')
     
     net = torch.nn.DataParallel(net)
-    net = net.to(DEVICE)
-    
+    net = net.to(DEVICE)    
 
     criterion = MultiboxLoss(iou_threshold=0.5, neg_pos_ratio=3, center_variance=0.1, size_variance=0.2).to(DEVICE)
     optimizer = torch.optim.SGD(params, lr=args.lr, momentum=args.momentum,
@@ -347,6 +351,10 @@ if __name__ == '__main__':
         parser.print_help(sys.stderr)
         sys.exit(1)
 
+
+    from eval_ssd import group_annotation_by_class
+    true_case_stat, all_gb_boxes, all_difficult_cases = group_annotation_by_class(testset)
+
     logger.info(f"Start training from epoch {last_epoch + 1}.")
     for epoch in range(last_epoch + 1, args.num_epochs):
         scheduler.step()
@@ -354,10 +362,86 @@ if __name__ == '__main__':
               device=DEVICE, debug_steps=20, epoch=epoch)        
         writer.add_scalars('loss_epoch', {'train': train_loss}, epoch)
 
-        if epoch % args.validation_epochs == 0 or epoch == args.num_epochs - 1:
+        if epoch % args.validation_epochs == 0 or epoch == args.num_epochs - 1:            
             val_loss = test(val_loader, net, criterion, device=DEVICE, debug_steps=args.debug_steps, epoch=epoch)
             writer.add_scalars('loss_epoch', {'val': val_loss}, epoch)
             
             model_path = os.path.join(args.jobs_dir, "snapshots", f"{args.net}-Epoch-{epoch}-Loss-{val_loss:.4f}.pth")            
             torch.save(net.module.state_dict(), model_path)
             logger.info(f"Saved model {model_path}")
+
+        if epoch % args.evaluation_epochs == 0 or epoch == arg.num_epochs - 1:
+            predictor = create_predictor(net, nms_method=args.nms_method, device=DEVICE)
+            mAP = evaluate(testset, predictor, label_file, args.jobs_dir, true_case_stat, all_gb_boxes, all_difficult_cases, args.iou_threshold, args.use_2007_metric)
+
+def evaluate(dataset, predictor, label_file, eval_path, 
+    true_case_stat, all_gb_boxes, all_difficult_cases,
+    iou_threshold, use_2007_metric):
+    
+    timer = Timer()
+
+    results = []
+    for ii in range(len(dataset)):
+
+        if (ii+1) % 100 == 0:
+            logger_eval("process image", ii)        
+            timer.start("Load Image")
+
+        image = dataset.get_image(ii)
+        
+        if (ii+1) % 100 == 0:
+            logger_eval("Load Image: {:4f} seconds.".format(timer.end("Load Image")))
+            timer.start("Predict")
+
+        boxes, labels, probs = predictor.predict(image)
+
+        if (ii+1) % 100 == 0:
+            logger_eval("Prediction: {:4f} seconds.".format(timer.end("Predict")))
+            
+        indexes = torch.ones(labels.size(0), 1, dtype=torch.float32) * ii
+        results.append(torch.cat([
+            indexes.reshape(-1, 1),
+            labels.reshape(-1, 1).float(),
+            probs.reshape(-1, 1),
+            boxes + 1.0  # matlab's indexes start from 1
+        ], dim=1))
+
+    results = torch.cat(results)
+
+    ## Save to files
+    class_names = [name.strip() for name in open(label_file).readlines()]
+
+    for class_index, class_name in enumerate(class_names):
+        if class_index == 0: continue  # ignore background
+        prediction_path = eval_path / f"det_test_{class_name}.txt"
+        with open(prediction_path, "w") as f:
+            sub = results[results[:, 1] == class_index, :]
+            for i in range(sub.size(0)):
+                prob_box = sub[i, 2:].numpy()
+                image_id = dataset.ids[int(sub[i, 0])]
+                logger_eval(
+                    image_id + " " + " ".join([str(v) for v in prob_box]),
+                    file=f
+                )
+    aps = []
+    logger_eval("\n\nAverage Precision Per-class:")
+    for class_index, class_name in enumerate(class_names):
+        if class_index == 0:
+            continue
+        prediction_path = eval_path / f"det_test_{class_name}.txt"
+        ap = compute_average_precision_per_class(
+            true_case_stat[class_index],
+            all_gb_boxes[class_index],
+            all_difficult_cases[class_index],
+            prediction_path,
+            iou_threshold,
+            use_2007_metric
+        )
+        aps.append(ap)
+        logger_eval(f"{class_name}: {ap}")
+
+    mAP = sum(aps)/len(aps)
+    logger_eval(f"\nAverage Precision Across All Classes:{mAP}")
+
+    return mAP
+

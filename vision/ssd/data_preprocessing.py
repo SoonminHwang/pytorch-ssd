@@ -52,13 +52,11 @@ class TestTransform:
 
 
 class PredictionTransform:
-    def __init__(self, size, mean=0.0, std=1.0):
+    def __init__(self, size, mean_tensor=None, stds_tensor=None):
         self.transform = Compose([
             Resize(size),
-            # SubtractMeans(mean),
-            # lambda img, boxes=None, labels=None: (img / std, boxes, labels),
             ToTensor(),
-            Normalize(mean, std)
+            Normalize(mean_tensor, stds_tensor)
         ])
 
     def __call__(self, image):
