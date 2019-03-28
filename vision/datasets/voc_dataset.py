@@ -3,6 +3,7 @@ import pathlib
 import xml.etree.ElementTree as ET
 import cv2
 from PIL import Image
+import torch
 
 class VOCDataset:
 
@@ -40,12 +41,14 @@ class VOCDataset:
 
         labels[ is_difficult == 1 ] = -100
 
-        image = self._read_image(image_id)
+        # image = self._read_image(image_id)
+        image, image_size = self._read_image(image_id)
+
         if self.transform:
             image, boxes, labels = self.transform(image, boxes, labels)
         if self.target_transform:
             boxes, labels = self.target_transform(boxes, labels)
-        return image, boxes, labels
+        return image, boxes, labels, image_size
 
     def get_image(self, index):
         image_id = self.ids[index]
@@ -106,7 +109,8 @@ class VOCDataset:
         # image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         image = Image.open( str(image_file) )
         # return np.array(image)
-        return image
+        # return image
+        return image, torch.tensor([image.height, image.width])
 
 
 if __name__ == '__main__':    

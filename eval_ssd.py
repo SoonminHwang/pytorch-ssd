@@ -178,7 +178,7 @@ if __name__ == '__main__':
             print("process image", ii)        
             timer.start("Load Image")
 
-        image = dataset.get_image(ii)
+        image = dataset.get_image(ii)[0]
         
         if (ii+1) % 100 == 0:
             print("Load Image: {:4f} seconds.".format(timer.end("Load Image")))

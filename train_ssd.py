@@ -121,7 +121,8 @@ def train(loader, net, criterion, optimizer, device, debug_steps=100, epoch=-1):
     N = len(loader)
     
     for batch_idx, data in enumerate(loader):
-        images, boxes, labels = data
+        # images, boxes, labels = data
+        images, boxes, labels, _ = data
         images = images.to(device)
         boxes = boxes.to(device)
         labels = labels.to(device)
@@ -169,20 +170,74 @@ def test(loader, net, criterion, device, debug_steps, epoch):
     N = len(loader)
 
     for batch_idx, data in enumerate(loader):
-        images, boxes, labels = data
+        # images, boxes, labels = data
+        images, boxes, labels, image_sizes = data
         images = images.to(device)
         boxes = boxes.to(device)
         labels = labels.to(device)          
 
         with torch.no_grad():
-            confidence, locations = net(images)
+            # confidence, locations = net(images)
+            confidence, locations, boxes = net(images)
             regression_loss, classification_loss = criterion(confidence, locations, labels, boxes)
-            loss = regression_loss + classification_loss
+            loss = regression_loss + classification_loss            
 
         total_loss += loss.item()
         running_loss += loss.item()
         running_regression_loss += regression_loss.item()
         running_classification_loss += classification_loss.item()
+
+        ## Decoding for evaluation
+        for ii, (conf_pred, boxes_pred) in enumerate( zip(confidence, boxes) ):
+
+            # if not prob_threshold:
+            #     prob_threshold = self.filter_threshold
+            iou_threshold = 0.5
+            # prob_threshold = 0.1
+            prob_threshold = 0.45
+            nms_method = "hard"
+            sigma = 0.5
+            top_k = -1
+            candidate_size = 200
+
+            height, width = image_sizes[ii]
+
+            # this version of nms is slower on GPU, so we move data to CPU.
+            bboxes = boxes_pred.to(torch.device("cpu"))
+            scores = conf_pred.to(torch.device("cpu"))
+
+            picked_box_probs = []
+            picked_labels = []
+
+            probs, labels = scores.max(1)
+
+            for class_index in range(1, scores.size(1)):
+                # probs = scores[:, class_index]
+
+                mask = (labels == class_index) * (probs > prob_threshold)
+                # mask = scores[:, labels == class_index, class_index] > prob_threshold
+                probs_cls = probs[mask]
+                if probs_cls.size(0) == 0:
+                    continue
+                subset_boxes = bboxes[mask, :]
+                box_probs = torch.cat([subset_boxes, probs_cls.reshape(-1, 1)], dim=1)
+                box_probs = box_utils.nms(box_probs, nms_method,
+                                          score_threshold=prob_threshold,
+                                          iou_threshold=iou_threshold,
+                                          sigma=sigma,
+                                          top_k=top_k,
+                                          candidate_size=candidate_size)
+                picked_box_probs.append(box_probs)
+                picked_labels.extend([class_index] * box_probs.size(0))
+            if not picked_box_probs:
+                return torch.zeros((0, 4)), torch.zeros((0)), torch.zeros((0))
+                # return torch.tensor([]), torch.tensor([]), torch.tensor([])
+            picked_box_probs = torch.cat(picked_box_probs)
+            picked_box_probs[:, 0] *= width
+            picked_box_probs[:, 1] *= height
+            picked_box_probs[:, 2] *= width
+            picked_box_probs[:, 3] *= height
+        
 
         if (batch_idx+1) % debug_steps == 0:
             avg_loss = running_loss / debug_steps
@@ -268,9 +323,13 @@ if __name__ == '__main__':
         logger.info(val_dataset)
     logger.info("validation dataset size: {}".format(len(val_dataset)))
 
-    val_loader = DataLoader(val_dataset, args.batch_size,
+    # val_loader = DataLoader(val_dataset, args.batch_size,
+    #                         num_workers=args.num_workers,
+    #                         shuffle=False)
+    val_loader = DataLoader(val_dataset, 1,
                             num_workers=args.num_workers,
                             shuffle=False)
+
     logger.info("Build network.")
     net = create_net(num_classes)
     min_loss = -10000.0
@@ -350,9 +409,9 @@ if __name__ == '__main__':
     logger.info(f"Start training from epoch {last_epoch + 1}.")
     for epoch in range(last_epoch + 1, args.num_epochs):
         scheduler.step()
-        train_loss = train(train_loader, net, criterion, optimizer,
-              device=DEVICE, debug_steps=20, epoch=epoch)        
-        writer.add_scalars('loss_epoch', {'train': train_loss}, epoch)
+        # train_loss = train(train_loader, net, criterion, optimizer,
+        #       device=DEVICE, debug_steps=20, epoch=epoch)        
+        # writer.add_scalars('loss_epoch', {'train': train_loss}, epoch)
 
         if epoch % args.validation_epochs == 0 or epoch == args.num_epochs - 1:
             val_loss = test(val_loader, net, criterion, device=DEVICE, debug_steps=args.debug_steps, epoch=epoch)

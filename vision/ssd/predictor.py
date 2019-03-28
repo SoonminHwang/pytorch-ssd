@@ -35,7 +35,8 @@ class Predictor:
         images = images.to(self.device)
         with torch.no_grad():
             # self.timer.start()
-            scores, boxes = self.net.forward(images)
+            # scores, boxes = self.net.forward(images)
+            scores, _, boxes = self.net.forward(images)
             # print("Inference time: ", self.timer.end())
         boxes = boxes[0]
         scores = scores[0]
@@ -46,14 +47,17 @@ class Predictor:
         scores = scores.to(cpu_device)
         picked_box_probs = []
         picked_labels = []
+
+        probs, labels = scores.max(1)
         for class_index in range(1, scores.size(1)):
-            probs = scores[:, class_index]
-            mask = probs > prob_threshold
-            probs = probs[mask]
-            if probs.size(0) == 0:
+            # probs = scores[:, class_index]
+            # mask = probs > prob_threshold
+            mask = (labels == class_index) * (probs > prob_threshold)
+            probs_cls = probs[mask]
+            if probs_cls.size(0) == 0:
                 continue
             subset_boxes = boxes[mask, :]
-            box_probs = torch.cat([subset_boxes, probs.reshape(-1, 1)], dim=1)
+            box_probs = torch.cat([subset_boxes, probs_cls.reshape(-1, 1)], dim=1)
             box_probs = box_utils.nms(box_probs, self.nms_method,
                                       score_threshold=prob_threshold,
                                       iou_threshold=self.iou_threshold,
